@@ -1,0 +1,9 @@
+# Everything except gg plugins
+*
+!.gitignore
+!gg_planer
+!gg_planer/*
+!gg_planer.rb
+
+# OSX
+.DS_Store
