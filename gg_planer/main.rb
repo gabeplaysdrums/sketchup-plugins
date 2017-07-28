@@ -36,22 +36,31 @@ class PlanerTool
 
     def deactivate(view)
         puts 'Planer deactivated'
-
+        self.remove_plane_preview
         view.invalidate if view
     end
 
+    def remove_plane_preview
+        if @plane_preview_group
+            puts 'hide plane preview'
+            Sketchup.active_model.active_entities.erase_entities @plane_preview_group
+        end
+    end
+
     def reset_plane
+        self.remove_plane_preview
+
         @points = []
         @vertices = Set.new
         @centroid = nil
         @projected_centroid = nil
         @normal = nil
+        @plane = nil
 
         Sketchup::set_status_text('Click a vertex to start painting vertices', SB_PROMPT)
     end
 
     def onLButtonDown(flags, x, y, view)
-        # Commit action by clicking on a vertex
         @originInput.pick view, x, y
         return unless (@originInput.valid? and @originInput.degrees_of_freedom == 0 and @originInput.vertex)
         view.invalidate
@@ -76,6 +85,26 @@ class PlanerTool
 
         return if @points.empty?
         self.add_to_plane(@originInput.vertex, @originInput.transformation, view)
+    end
+
+    def onKeyDown(key, repeat, flags, view)
+        if (flags & ALT_MODIFIER_MASK == 0)
+            if @plane
+                puts 'show plane preview'
+                @plane_preview_group = Sketchup.active_model.entities.add_group
+                circle = @plane_preview_group.entities.add_circle(@projected_centroid, @normal, 2 * @@normal_length)
+                face = @plane_preview_group.entities.add_face circle
+                material = 'green'
+                face.material = material
+                face.back_material = material
+            end
+        end
+    end
+
+    def onKeyUp(key, repeat, flags, view)
+        if (flags & ALT_MODIFIER_MASK == 0)
+            self.remove_plane_preview
+        end
     end
 
     def add_to_plane(vertex, transformation, view)
@@ -103,9 +132,9 @@ class PlanerTool
         @centroid = Geom::Point3d.new(@centroid.x / @points.length, @centroid.y / @points.length, @centroid.z / @points.length)
 
         # Compute new plane
-        plane = Geom.fit_plane_to_points(@points)
-        @projected_centroid = @centroid.project_to_plane plane
-        p, @normal = normalize_plane plane
+        @plane = Geom.fit_plane_to_points(@points)
+        @projected_centroid = @centroid.project_to_plane @plane
+        p, @normal = normalize_plane @plane
         @normal.length = @@normal_length
 
         if @normal.z < 0
