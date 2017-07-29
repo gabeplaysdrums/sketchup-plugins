@@ -37,6 +37,7 @@ class PlanerTool
         @normal_length = '10'.to_l
         @brush_radius = '0'.to_l
         @brush_hops = 5
+        @component_definition = nil
 
         self.reset_plane
     end
@@ -189,14 +190,36 @@ class PlanerTool
 
     def commit_plane
         puts 'commit plane'
-        @plane_group = Sketchup.active_model.entities.add_group
-        @plane_group.entities.add_face @oriented_bounds_polyline
-        @plane_group.entities.add_line(@center, @center.offset(@normal))
-        @plane_group.entities.add_line(@center, @center.offset(@x_axis_proj))
-        @plane_group.entities.add_line(@center, @center.offset(@y_axis_proj))
+        if @component_definition
+            transformation = Geom::Transformation.axes(@center, @x_axis_proj, @y_axis_proj, @normal.normalize)
+            Sketchup.active_model.entities.add_instance(@component_definition, transformation)
+        else
+            @plane_group = Sketchup.active_model.entities.add_group
+            @plane_group.entities.add_face @oriented_bounds_polyline
+            @plane_group.entities.add_line(@center, @center.offset(@normal))
+            @plane_group.entities.add_line(@center, @center.offset(@x_axis_proj))
+            @plane_group.entities.add_line(@center, @center.offset(@y_axis_proj))
+        end
         self.remove_plane_preview
         self.reset_plane
         self.set_state STATE_INIT
+    end
+
+    def pick_component
+        selection = Sketchup.active_model.selection
+        if not selection.empty?
+            if selection.first.is_a? Sketchup::ComponentInstance
+                @component_definition = selection.first.definition
+                return true
+            end
+        end
+
+        Sketchup::set_status_text('No component selected.  Please select a component instance first.', SB_PROMPT)
+        return false
+    end
+
+    def clear_component
+        @component_definition = nil
     end
 
     def onKeyDown(key, repeat, flags, view)
@@ -347,9 +370,16 @@ end#class
 
 menu = UI.menu("Tools").add_submenu("Planer")
 
-menu.add_item("Define Plane") { Sketchup.active_model.select_tool(PlanerTool.get_for_model(Sketchup.active_model)) }
-menu.add_item("Duplicate Component on Plane") {
-    Sketchup.active_model.select_tool(PlanerTool.get_for_model(Sketchup.active_model))
+menu.add_item("Define Plane") {
+    tool = PlanerTool.get_for_model(Sketchup.active_model)
+    tool.clear_component
+    Sketchup.active_model.select_tool(tool)
+}
+menu.add_item("Duplicate Component onto Plane") {
+    tool = PlanerTool.get_for_model(Sketchup.active_model)
+    if tool.pick_component
+        Sketchup.active_model.select_tool(tool)
+    end
 }
 menu.add_item("Settings") { PlanerTool.get_for_model(Sketchup.active_model).show_settings }
 
