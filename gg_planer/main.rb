@@ -2,6 +2,11 @@ module GG_Planer
 
 require 'set'
 
+KC_CTRL = 262144
+KC_ALT = 524288
+KC_GUI = 1048576
+MOVE_CAMERA_DEGREES_PER_PIXEL = 90.0 / 300
+
 menu = UI.menu("Tools")
 menu.add_item("Planer") { Sketchup.active_model.select_tool(PlanerTool.new) }
 menu.add_item("Planer Settings") { PlanerTool.show_settings }
@@ -32,6 +37,10 @@ class PlanerTool
         @originInput = Sketchup::InputPoint.new
 
         self.reset_plane
+
+        @camera = nil
+        @move_camera_start_coords  = nil
+        @move_camera_enabled = false
     end
 
     def deactivate(view)
@@ -44,6 +53,7 @@ class PlanerTool
         if @plane_preview_group
             puts 'hide plane preview'
             Sketchup.active_model.active_entities.erase_entities @plane_preview_group
+            @plane_preview_group = nil
         end
     end
 
@@ -61,6 +71,13 @@ class PlanerTool
     end
 
     def onLButtonDown(flags, x, y, view)
+        if @move_camera_enabled
+            puts 'move camera start'
+            @camera = view.camera
+            @move_camera_start_coords = [x, y]
+            return
+        end
+
         @originInput.pick view, x, y
         return unless (@originInput.valid? and @originInput.degrees_of_freedom == 0 and @originInput.vertex)
         view.invalidate
@@ -78,17 +95,40 @@ class PlanerTool
         end
     end
 
-    def onMouseMove(flags, x, y, view)
-        @originInput.pick view, x, y
-        return unless (@originInput.valid? and @originInput.degrees_of_freedom == 0 and @originInput.vertex)
-        view.invalidate
+    def onLButtonUp(flags, x, y, view)
+        if @camera
+            puts 'move camera end'
+            @camera = nil
+            @move_camera_start_coords = nil
+        end
+    end
 
-        return if @points.empty?
-        self.add_to_plane(@originInput.vertex, @originInput.transformation, view)
+    def onMouseMove(flags, x, y, view)
+        if @move_camera_enabled
+            return if not @camera
+            roll = 0
+            yaw = MOVE_CAMERA_DEGREES_PER_PIXEL * (x - @move_camera_start_coords[0])
+            pitch = MOVE_CAMERA_DEGREES_PER_PIXEL * (y - @move_camera_start_coords[1])
+            puts 'moving camera: %.2f, %.2f, %.2f' % [roll, pitch, yaw]
+            t = (
+                Geom::Transformation.rotation(@projected_centroid, Geom::Transformation.rotation([0,0,0], @camera.target - @camera.eye, 90.degrees) * @camera.up, pitch.degrees) *
+                Geom::Transformation.rotation(@projected_centroid, @camera.up, yaw.degrees)
+            )
+            view.camera = Sketchup::Camera.new(t * @camera.eye, t * @camera.target, @camera.up)
+        else
+            @originInput.pick view, x, y
+            return unless (@originInput.valid? and @originInput.degrees_of_freedom == 0 and @originInput.vertex)
+            view.invalidate
+
+            return if @points.empty?
+            self.add_to_plane(@originInput.vertex, @originInput.transformation, view)
+        end
     end
 
     def onKeyDown(key, repeat, flags, view)
-        if (flags & ALT_MODIFIER_MASK == 0)
+        #puts 'down: key=%d' % [key]
+
+        if key == KC_ALT
             if @plane
                 puts 'show plane preview'
                 @plane_preview_group = Sketchup.active_model.entities.add_group
@@ -98,12 +138,20 @@ class PlanerTool
                 face.material = material
                 face.back_material = material
             end
+        elsif key == KC_GUI
+            puts 'move camera enabled'
+            @move_camera_enabled = true
         end
     end
 
     def onKeyUp(key, repeat, flags, view)
-        if (flags & ALT_MODIFIER_MASK == 0)
+        #puts 'up: key=%d' % [key]
+
+        if key == KC_ALT
             self.remove_plane_preview
+        elsif key == KC_GUI
+            puts 'move camera disabled'
+            @move_camera_enabled = false
         end
     end
 
