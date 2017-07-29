@@ -62,14 +62,14 @@ class PlanerTool
     end
 
     def show_settings
-        prompts = ['Normal length', 'Brush radius', 'Brush hops']
-        defaults = [@normal_length, @brush_radius, @brush_hops]
+        prompts = ['Brush radius', 'Brush hops', 'Normal length']
+        defaults = [@brush_radius, @brush_hops, @normal_length]
         input = UI.inputbox(prompts, defaults, 'Planer Options')
 
         if input
-            @normal_length = input[0].to_l
-            @brush_radius = input[1].to_l
-            @brush_hops = input[2].to_i
+            @brush_radius = input[0].to_l
+            @brush_hops = input[1].to_i
+            @normal_length = input[2].to_l
         end
     end
 
