@@ -5,7 +5,11 @@ require 'set'
 KC_CTRL = 262144
 KC_ALT = 524288
 KC_GUI = 1048576
-MOVE_CAMERA_DEGREES_PER_PIXEL = 90.0 / 300
+KC_ENTER = 13
+KC_ESC = 27
+
+STATE_INIT = 0
+STATE_TAGGING = 1
 
 menu = UI.menu("Tools")
 menu.add_item("Planer") { Sketchup.active_model.select_tool(PlanerTool.new) }
@@ -28,19 +32,35 @@ class PlanerTool
         end
     end
 
+    def self.reset_plane
+        @@points = []
+        @@vertices = Set.new
+        @@centroid = nil
+        @@projected_centroid = nil
+        @@normal = nil
+        @@plane = nil
+    end
+
+    def set_state(state)
+        @state = state
+
+        if @state == STATE_INIT
+            Sketchup::set_status_text('Click a vertex to start tagging vertices', SB_PROMPT)
+        elsif @state == STATE_TAGGING
+            Sketchup::set_status_text('Move mouse to tag vertices.  Click a vertex to stop tagging.  Press <Enter> to commit the plane, <Esc> to start over.', SB_PROMPT)
+        end
+    end
+
     def activate
         puts 'Planer activated'
 
         @ph = Sketchup.active_model.active_view.pick_helper
 
-        Sketchup::set_status_text('Click a vertex to start painting vertices', SB_PROMPT)
         @originInput = Sketchup::InputPoint.new
 
-        self.reset_plane
+        Sketchup.active_model.active_view.invalidate
 
-        @camera = nil
-        @move_camera_start_coords  = nil
-        @move_camera_enabled = false
+        set_state STATE_INIT
     end
 
     def deactivate(view)
@@ -57,90 +77,64 @@ class PlanerTool
         end
     end
 
-    def reset_plane
-        self.remove_plane_preview
-
-        @points = []
-        @vertices = Set.new
-        @centroid = nil
-        @projected_centroid = nil
-        @normal = nil
-        @plane = nil
-
-        Sketchup::set_status_text('Click a vertex to start painting vertices', SB_PROMPT)
-    end
-
     def onLButtonDown(flags, x, y, view)
-        if @move_camera_enabled
-            puts 'move camera start'
-            @camera = view.camera
-            @move_camera_start_coords = [x, y]
-            return
-        end
-
         @originInput.pick view, x, y
         return unless (@originInput.valid? and @originInput.degrees_of_freedom == 0 and @originInput.vertex)
         view.invalidate
 
-        first_point = @points.empty?
+        first_point = @@points.empty?
         self.add_to_plane(@originInput.vertex, @originInput.transformation, view)
 
-        if first_point
-            # Begin painting vertices
-            Sketchup::set_status_text('Move mouse to paint vertices to plane.  Click a vertex to commit the plane', SB_PROMPT)
-        elsif @points.length > 3
-            # Commit plane
-            Sketchup.active_model.active_entities.add_line(@projected_centroid, @projected_centroid.offset(@normal))
-            self.reset_plane
+        if @state == STATE_INIT
+            set_state STATE_TAGGING
+        elsif @state == STATE_TAGGING
+            set_state STATE_INIT
         end
+
+        # elsif @@points.length > 3
+        #     # Commit plane
+        #     Sketchup.active_model.active_entities.add_line(@@projected_centroid, @@projected_centroid.offset(@@normal))
+        #     PlanerTool.reset_plane
+        #     self.remove_plane_preview
     end
 
     def onLButtonUp(flags, x, y, view)
-        if @camera
-            puts 'move camera end'
-            @camera = nil
-            @move_camera_start_coords = nil
-        end
     end
 
     def onMouseMove(flags, x, y, view)
-        if @move_camera_enabled
-            return if not @camera
-            roll = 0
-            yaw = MOVE_CAMERA_DEGREES_PER_PIXEL * (x - @move_camera_start_coords[0])
-            pitch = MOVE_CAMERA_DEGREES_PER_PIXEL * (y - @move_camera_start_coords[1])
-            puts 'moving camera: %.2f, %.2f, %.2f' % [roll, pitch, yaw]
-            t = (
-                Geom::Transformation.rotation(@projected_centroid, Geom::Transformation.rotation([0,0,0], @camera.target - @camera.eye, 90.degrees) * @camera.up, pitch.degrees) *
-                Geom::Transformation.rotation(@projected_centroid, @camera.up, yaw.degrees)
-            )
-            view.camera = Sketchup::Camera.new(t * @camera.eye, t * @camera.target, @camera.up)
-        else
-            @originInput.pick view, x, y
-            return unless (@originInput.valid? and @originInput.degrees_of_freedom == 0 and @originInput.vertex)
-            view.invalidate
+        @originInput.pick view, x, y
+        return unless (@originInput.valid? and @originInput.degrees_of_freedom == 0 and @originInput.vertex)
+        view.invalidate
 
-            return if @points.empty?
-            self.add_to_plane(@originInput.vertex, @originInput.transformation, view)
-        end
+        return if not @state == STATE_TAGGING
+        self.add_to_plane(@originInput.vertex, @originInput.transformation, view)
     end
 
     def onKeyDown(key, repeat, flags, view)
-        #puts 'down: key=%d' % [key]
+        puts 'down: key=%d' % [key]
 
         if key == KC_ALT
-            if @plane
+            if @@plane
                 puts 'show plane preview'
                 @plane_preview_group = Sketchup.active_model.entities.add_group
-                circle = @plane_preview_group.entities.add_circle(@projected_centroid, @normal, 2 * @@normal_length)
+                circle = @plane_preview_group.entities.add_circle(@@projected_centroid, @@normal, 2 * @@normal_length)
                 face = @plane_preview_group.entities.add_face circle
                 material = 'green'
                 face.material = material
                 face.back_material = material
             end
-        elsif key == KC_GUI
-            puts 'move camera enabled'
-            @move_camera_enabled = true
+        elsif key == KC_ENTER
+            if @@plane
+                puts 'commit plane'
+                Sketchup.active_model.active_entities.add_line(@@projected_centroid, @@projected_centroid.offset(@@normal))
+                self.remove_plane_preview
+                PlanerTool.reset_plane
+                set_state STATE_INIT
+            end
+        elsif key == KC_ESC
+            puts 'discard plane'
+            PlanerTool.reset_plane
+            set_state STATE_INIT
         end
     end
 
@@ -149,9 +143,6 @@ class PlanerTool
 
         if key == KC_ALT
             self.remove_plane_preview
-        elsif key == KC_GUI
-            puts 'move camera disabled'
-            @move_camera_enabled = false
         end
     end
 
@@ -161,9 +152,9 @@ class PlanerTool
 
         points_added = false
         found_vertices.entries.each { |v|
-            if not @vertices.include?(v)
-                @vertices.add(v)
-                @points.push(transformation * v.position)
+            if not @@vertices.include?(v)
+                @@vertices.add(v)
+                @@points.push(transformation * v.position)
                 points_added = true
             end
         }
@@ -172,21 +163,21 @@ class PlanerTool
 
         view.invalidate
 
-        return if @points.length < 3
+        return if @@points.length < 3
 
         # Compute the new centroid
-        @centroid = Geom::Point3d.new 0, 0, 0
-        @points.each { |p| @centroid = @centroid + [p.x, p.y, p.z] }
-        @centroid = Geom::Point3d.new(@centroid.x / @points.length, @centroid.y / @points.length, @centroid.z / @points.length)
+        @@centroid = Geom::Point3d.new 0, 0, 0
+        @@points.each { |p| @@centroid = @@centroid + [p.x, p.y, p.z] }
+        @@centroid = Geom::Point3d.new(@@centroid.x / @@points.length, @@centroid.y / @@points.length, @@centroid.z / @@points.length)
 
         # Compute new plane
-        @plane = Geom.fit_plane_to_points(@points)
-        @projected_centroid = @centroid.project_to_plane @plane
-        p, @normal = normalize_plane @plane
-        @normal.length = @@normal_length
+        @@plane = Geom.fit_plane_to_points(@@points)
+        @@projected_centroid = @@centroid.project_to_plane @@plane
+        p, @@normal = normalize_plane @@plane
+        @@normal.length = @@normal_length
 
-        if @normal.z < 0
-            @normal = @normal.reverse
+        if @@normal.z < 0
+            @@normal = @@normal.reverse
         end
     end
 
@@ -201,14 +192,14 @@ class PlanerTool
     def draw(view)
         @originInput.draw view
 
-        return if @points.empty?
-        view.draw_points(@points, 10, 5, 'green')
+        return if @@points.empty?
+        view.draw_points(@@points, 10, 5, 'green')
 
-        if @projected_centroid and @normal
-            view.draw_points([ @projected_centroid ], 10, 1, 'blue')
+        if @@projected_centroid and @@normal
+            view.draw_points([ @@projected_centroid ], 10, 1, 'blue')
             view.drawing_color = 'blue'
             view.line_stipple = '_'
-            view.draw_line(@projected_centroid, @projected_centroid.offset(@normal))
+            view.draw_line(@@projected_centroid, @@projected_centroid.offset(@@normal))
         end
     end
 
@@ -242,4 +233,7 @@ class PlanerTool
     end
 
 end#class
+
+PlanerTool.reset_plane
+
 end#module
