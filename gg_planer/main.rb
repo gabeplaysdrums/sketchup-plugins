@@ -10,6 +10,7 @@ KC_ESC = 27
 
 STATE_INIT = 0
 STATE_TAGGING = 1
+STATE_ORIENTING = 2
 
 menu = UI.menu("Tools")
 menu.add_item("Planer") { Sketchup.active_model.select_tool(PlanerTool.new) }
@@ -39,15 +40,32 @@ class PlanerTool
         @@projected_centroid = nil
         @@normal = nil
         @@plane = nil
+        @@oriented_bounds_polyline = nil
+        @@x_axis_proj = nil
+        @@y_axis_proj = nil
+        @@plane_group = nil
+    end
+
+    def self.plane_point(origin, x_axis, y_axis, x, y)
+        # Reference: https://math.stackexchange.com/questions/525829/how-to-find-the-3d-coordinate-of-a-2d-point-on-a-known-plane
+        return Geom::Point3d.new(
+            origin.x + x * x_axis.x + y * y_axis.x,
+            origin.y + x * x_axis.y + y * y_axis.y,
+            origin.z + x * x_axis.z + y * y_axis.z
+        )
     end
 
     def set_state(state)
         @state = state
 
         if @state == STATE_INIT
-            Sketchup::set_status_text('Click a vertex to start tagging vertices', SB_PROMPT)
+            Sketchup::set_status_text('Click a vertex to start tagging vertices, <Esc> to start over.', SB_PROMPT)
         elsif @state == STATE_TAGGING
-            Sketchup::set_status_text('Move mouse to tag vertices.  Click a vertex to stop tagging.  Press <Enter> to commit the plane, <Esc> to start over.', SB_PROMPT)
+            Sketchup::set_status_text('Move mouse to tag vertices.  Click a vertex to stop tagging.  Press <Enter> to proceed to next step, <Esc> to start over.', SB_PROMPT)
+        elsif @state == STATE_ORIENTING
+            Sketchup::set_status_text('Move mouse to choose orientation.  Press <Enter> to commit the plane, <Esc> to tag more vertices.', SB_PROMPT)
+        else
+            set_state STATE_INIT
         end
     end
 
@@ -56,7 +74,8 @@ class PlanerTool
 
         @ph = Sketchup.active_model.active_view.pick_helper
 
-        @originInput = Sketchup::InputPoint.new
+        @vertexInput = Sketchup::InputPoint.new
+        @orientInput = Sketchup::InputPoint.new
 
         Sketchup.active_model.active_view.invalidate
 
@@ -78,36 +97,92 @@ class PlanerTool
     end
 
     def onLButtonDown(flags, x, y, view)
-        @originInput.pick view, x, y
-        return unless (@originInput.valid? and @originInput.degrees_of_freedom == 0 and @originInput.vertex)
+        if @state == STATE_ORIENTING
+            self.commit_plane
+            set_state STATE_INIT
+            view.invalidate
+            return
+        end
+
+        @vertexInput.pick view, x, y
+        return unless (@vertexInput.valid? and @vertexInput.degrees_of_freedom == 0 and @vertexInput.vertex)
         view.invalidate
 
         first_point = @@points.empty?
-        self.add_to_plane(@originInput.vertex, @originInput.transformation, view)
+        self.add_to_plane(@vertexInput.vertex, @vertexInput.transformation, view)
 
         if @state == STATE_INIT
             set_state STATE_TAGGING
         elsif @state == STATE_TAGGING
             set_state STATE_INIT
         end
-
-        # elsif @@points.length > 3
-        #     # Commit plane
-        #     Sketchup.active_model.active_entities.add_line(@@projected_centroid, @@projected_centroid.offset(@@normal))
-        #     PlanerTool.reset_plane
-        #     self.remove_plane_preview
     end
 
     def onLButtonUp(flags, x, y, view)
     end
 
     def onMouseMove(flags, x, y, view)
-        @originInput.pick view, x, y
-        return unless (@originInput.valid? and @originInput.degrees_of_freedom == 0 and @originInput.vertex)
-        view.invalidate
+        if @state != STATE_ORIENTING
+            @vertexInput.pick view, x, y
+            return unless (@vertexInput.valid? and @vertexInput.degrees_of_freedom == 0 and @vertexInput.vertex)
+            view.invalidate
+            self.add_to_plane(@vertexInput.vertex, @vertexInput.transformation, view) if @state == STATE_TAGGING
+        elsif @state == STATE_ORIENTING and @@plane
+            @orientInput.pick view, x, y
+            return unless @orientInput.valid?
 
-        return if not @state == STATE_TAGGING
-        self.add_to_plane(@originInput.vertex, @originInput.transformation, view)
+            # Reference: https://stackoverflow.com/questions/23472048/projecting-3d-points-to-2d-plane
+            @@x_axis_proj = (@@projected_centroid.vector_to (@orientInput.position.project_to_plane @@plane)).normalize
+            @@y_axis_proj = (@@x_axis_proj.cross @@normal).normalize
+
+            bounds_x = nil
+            bounds_y = nil
+
+            @@points.each { |p|
+                p_proj = p.project_to_plane @@plane
+                #t_1 = Dot(e_1, r_P-r_O)
+                x_proj = @@x_axis_proj.dot(p_proj - @@projected_centroid)
+                #t_2 = Dot(e_2, r_P-r_O)
+                y_proj = @@y_axis_proj.dot(p_proj - @@projected_centroid)
+
+                if not bounds_x
+                    bounds_x = [x_proj, x_proj]
+                else
+                    bounds_x = (bounds_x + [x_proj]).minmax
+                end
+
+                if not bounds_y
+                    bounds_y = [y_proj, y_proj]
+                else
+                    bounds_y = (bounds_y + [y_proj]).minmax
+                end
+            }
+
+            @@oriented_bounds_polyline = [
+                PlanerTool.plane_point(@@projected_centroid, @@x_axis_proj, @@y_axis_proj, bounds_x[0], bounds_y[0]),
+                PlanerTool.plane_point(@@projected_centroid, @@x_axis_proj, @@y_axis_proj, bounds_x[0], bounds_y[1]),
+                PlanerTool.plane_point(@@projected_centroid, @@x_axis_proj, @@y_axis_proj, bounds_x[1], bounds_y[1]),
+                PlanerTool.plane_point(@@projected_centroid, @@x_axis_proj, @@y_axis_proj, bounds_x[1], bounds_y[0]),
+                PlanerTool.plane_point(@@projected_centroid, @@x_axis_proj, @@y_axis_proj, bounds_x[0], bounds_y[0]),
+            ]
+
+            @@x_axis_proj.length = @@normal_length
+            @@y_axis_proj.length = @@normal_length
+
+            view.invalidate
+        end
+    end
+
+    def commit_plane
+        puts 'commit plane'
+        @@plane_group = Sketchup.active_model.entities.add_group
+        @@plane_group.entities.add_face @@oriented_bounds_polyline
+        @@plane_group.entities.add_line(@@projected_centroid, @@projected_centroid.offset(@@normal))
+        @@plane_group.entities.add_line(@@projected_centroid, @@projected_centroid.offset(@@x_axis_proj))
+        @@plane_group.entities.add_line(@@projected_centroid, @@projected_centroid.offset(@@y_axis_proj))
+        self.remove_plane_preview
+        PlanerTool.reset_plane
+        self.set_state STATE_INIT
     end
 
     def onKeyDown(key, repeat, flags, view)
@@ -117,24 +192,31 @@ class PlanerTool
             if @@plane
                 puts 'show plane preview'
                 @plane_preview_group = Sketchup.active_model.entities.add_group
-                circle = @plane_preview_group.entities.add_circle(@@projected_centroid, @@normal, 2 * @@normal_length)
-                face = @plane_preview_group.entities.add_face circle
+                if @state == STATE_ORIENTING
+                    face = @plane_preview_group.entities.add_face @@oriented_bounds_polyline
+                else
+                    circle = @plane_preview_group.entities.add_circle(@@projected_centroid, @@normal, 2 * @@normal_length)
+                    face = @plane_preview_group.entities.add_face circle
+                end
                 material = 'green'
                 face.material = material
                 face.back_material = material
             end
         elsif key == KC_ENTER
-            if @@plane
-                puts 'commit plane'
-                Sketchup.active_model.active_entities.add_line(@@projected_centroid, @@projected_centroid.offset(@@normal))
-                self.remove_plane_preview
-                PlanerTool.reset_plane
-                set_state STATE_INIT
+            if @state == STATE_ORIENTING
+                self.commit_plane
+                view.invalidate
+            elsif @@plane
+                self.set_state STATE_ORIENTING
             end
         elsif key == KC_ESC
-            puts 'discard plane'
-            PlanerTool.reset_plane
-            set_state STATE_INIT
+            if @state != STATE_ORIENTING
+                puts 'discard plane'
+                PlanerTool.reset_plane
+                view.invalidate
+            end
+
+            self.set_state STATE_INIT
         end
     end
 
@@ -182,15 +264,21 @@ class PlanerTool
     end
 
     def pick_and_add_vertex_point(view, x, y)
-        @originInput.pick view, x, y
-        return unless (@originInput.valid? and @originInput.degrees_of_freedom == 0 and @originInput.vertex)
+        @vertexInput.pick view, x, y
+        return unless (@vertexInput.valid? and @vertexInput.degrees_of_freedom == 0 and @vertexInput.vertex)
         view.invalidate
 
-        self.add_to_plane(@originInput.vertex, @originInput.transformation, view)
+        self.add_to_plane(@vertexInput.vertex, @vertexInput.transformation, view)
     end
 
     def draw(view)
-        @originInput.draw view
+        if @state == STATE_ORIENTING and @@plane and @orientInput.valid?
+            view.line_stipple = '_'
+            view.draw_line(@@projected_centroid, (@orientInput.position.project_to_plane @@plane))
+            view.draw_polyline @@oriented_bounds_polyline if @@oriented_bounds_polyline and @@oriented_bounds_polyline.length >= 2
+        elsif @state != STATE_ORIENTING
+            @vertexInput.draw view
+        end
 
         return if @@points.empty?
         view.draw_points(@@points, 10, 5, 'green')
