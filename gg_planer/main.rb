@@ -146,7 +146,7 @@ class PlanerTool
 
             # Reference: https://stackoverflow.com/questions/23472048/projecting-3d-points-to-2d-plane
             @x_axis_proj = (@projected_centroid.vector_to (@orientInput.position.project_to_plane @plane)).normalize
-            @y_axis_proj = (@x_axis_proj.cross @normal).normalize
+            @y_axis_proj = (@normal.cross @x_axis_proj).normalize
 
             bounds_x = nil
             bounds_y = nil
