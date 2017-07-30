@@ -1,18 +1,28 @@
 module GG_Nudge
 
-menu = UI.menu("Tools")
-menu.add_item("Nudge") { Sketchup.active_model.select_tool(NudgeTool.new) }
-
 KC_UP = 63232
 KC_DOWN = 63233
 KC_LEFT = 63234
 KC_RIGHT = 63235
 KC_HOME = 63273
 KC_END = 63275
-TRANSLATE_STEP = '0.25'.to_l
-ROTATE_STEP = 0.25.degrees
 
 class NudgeTool
+
+    @@instances = Hash.new
+
+    def self.get_for_model(model)
+        if not @@instances.include?(model.guid)
+            @@instances[model.guid] = self.new
+        end
+
+        return @@instances[model.guid]
+    end
+
+    def initialize
+        @translate_step = '0.25'.to_l
+        @rotate_step = 0.25
+    end
 
     def activate
         @ph = Sketchup.active_model.active_view.pick_helper
@@ -22,6 +32,17 @@ class NudgeTool
         @originInput = Sketchup::InputPoint.new
         @origin = nil
 
+    end
+
+    def show_settings
+        prompts = ['Translate step', 'Rotate step']
+        defaults = [@translate_step, @rotate_step]
+        input = UI.inputbox(prompts, defaults, 'Nudge Options')
+
+        if input
+            @translate_step = input[0].to_l
+            @rotate_step = input[1].to_f
+        end
     end
 
     def start_move
@@ -35,16 +56,11 @@ class NudgeTool
     end
 
     def onKeyDown(key, repeat, flags, view)
-        puts "onKeyDown: key = #{key}"
-        puts "        repeat = #{repeat}"
-        puts "         flags = #{flags}"
-        puts "          view = #{view}"
-
         translate = (flags & ALT_MODIFIER_MASK == 0)
         y_axis = (flags & COPY_MODIFIER_MASK == 0)
 
         if translate
-            step = (flags & CONSTRAIN_MODIFIER_MASK == 0) ? TRANSLATE_STEP : 10*TRANSLATE_STEP
+            step = (flags & CONSTRAIN_MODIFIER_MASK == 0) ? @translate_step : 10*@translate_step
 
             if false
             elsif key == KC_RIGHT
@@ -67,7 +83,7 @@ class NudgeTool
                 self.translate(0, 0, -step)
             end
         else
-            step = (flags & CONSTRAIN_MODIFIER_MASK == 0) ? ROTATE_STEP : 10*ROTATE_STEP
+            step = (flags & CONSTRAIN_MODIFIER_MASK == 0) ? @rotate_step.degrees : 10*@rotate_step.degrees
 
             if false
             elsif key == KC_RIGHT
@@ -90,13 +106,26 @@ class NudgeTool
                 self.rotate(step, 0, 0, -1)
             end
         end
+
+        view.invalidate
+    end
+
+    def onMouseMove(flags, x, y, view)
+        if not @origin
+            @originInput.pick view, x, y
+            view.invalidate
+        end
+    end
+
+    def draw(view)
+        @originInput.draw view
+        view.draw_points([ @origin ], 10, 1, 'gold') if @origin
     end
 
     def translate(x, y, z)
         return if not @origin
 
         t = Geom::Vector3d.new(x, y, z)
-        @origin = @origin + t
 
         Sketchup.active_model.selection.each { |entity|
             entity.transform!(Geom::Transformation.translation(t))
@@ -131,8 +160,19 @@ class NudgeTool
 
         if @origin
             Sketchup::set_status_text("Use keyboard to nudge selection", SB_PROMPT)
+            view.invalidate
         end
     end
+
+menu = UI.menu("Tools").add_submenu("Nudge")
+menu.add_item("In model axes relative to point") {
+    tool = NudgeTool.get_for_model Sketchup.active_model
+    Sketchup.active_model.select_tool tool
+}
+menu.add_item("Settings") {
+    tool = NudgeTool.get_for_model Sketchup.active_model
+    tool.show_settings
+}
 
 end#class
 end#module

@@ -18,7 +18,7 @@ class PlanerTool
 
     def self.get_for_model(model)
         if not @@instances.include?(model.guid)
-            @@instances[model.guid] = PlanerTool.new
+            @@instances[model.guid] = self.new
         end
 
         return @@instances[model.guid]
@@ -44,8 +44,6 @@ class PlanerTool
 
     def activate
         puts 'Planer activated'
-
-        @ph = Sketchup.active_model.active_view.pick_helper
 
         @vertexInput = Sketchup::InputPoint.new
         @orientInput = Sketchup::InputPoint.new
