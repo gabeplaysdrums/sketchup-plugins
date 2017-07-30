@@ -52,7 +52,9 @@ class PlanerTool
 
         Sketchup.active_model.active_view.invalidate
 
-        self.set_state STATE_INIT
+        # show prompt on activation
+        self.set_state @state
+
     end
 
     def deactivate(view)
@@ -85,6 +87,7 @@ class PlanerTool
         @y_axis_proj = nil
         @plane_group = nil
         @center = nil
+        @state = STATE_INIT
     end
 
     def set_state(state)
@@ -201,8 +204,6 @@ class PlanerTool
             @plane_group.entities.add_line(@center, @center.offset(@y_axis_proj))
         end
         self.remove_plane_preview
-        self.reset_plane
-        self.set_state STATE_INIT
     end
 
     def pick_component
