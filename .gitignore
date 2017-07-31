@@ -4,6 +4,9 @@
 !gg_planer
 !gg_planer/*
 !gg_planer.rb
+!gg_nudge
+!gg_nudge/*
+!gg_nudge.rb
 
 # OSX
 .DS_Store
