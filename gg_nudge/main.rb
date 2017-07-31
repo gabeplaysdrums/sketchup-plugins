@@ -22,15 +22,20 @@ class NudgeTool
     def initialize
         @translate_step = '0.25'.to_l
         @rotate_step = 0.25
+        self.clear_component
     end
 
     def activate
         @ph = Sketchup.active_model.active_view.pick_helper
         puts 'Nudge activated'
 
-        Sketchup::set_status_text('Choose an origin point', SB_PROMPT)
-        @originInput = Sketchup::InputPoint.new
-        @origin = nil
+        if @component_instance
+            self.start_move
+        else
+            Sketchup::set_status_text('Choose an origin point', SB_PROMPT)
+            @originInput = Sketchup::InputPoint.new
+            @origin = nil
+        end
 
     end
 
@@ -43,6 +48,25 @@ class NudgeTool
             @translate_step = input[0].to_l
             @rotate_step = input[1].to_f
         end
+    end
+
+    def pick_component
+        selection = Sketchup.active_model.selection
+        if not selection.empty?
+            if selection.first.is_a? Sketchup::ComponentInstance
+                @component_instance = selection.first
+                @original_component_transformation = @component_instance.transformation
+                return true
+            end
+        end
+
+        Sketchup::set_status_text('No component selected.  Please select a component instance first.', SB_PROMPT)
+        return false
+    end
+
+    def clear_component
+        @component_instance = nil
+        @original_component_transformation = nil
     end
 
     def start_move
@@ -64,22 +88,22 @@ class NudgeTool
 
             if false
             elsif key == KC_RIGHT
-                puts '+x'
+                #puts '+x'
                 self.translate(step, 0, 0)
             elsif key == KC_LEFT
-                puts '-x'
+                #puts '-x'
                 self.translate(-step, 0, 0)
             elsif key == KC_UP and y_axis
-                puts '+y'
+                #puts '+y'
                 self.translate(0, step, 0)
             elsif key == KC_DOWN and y_axis
-                puts '-y'
+                #puts '-y'
                 self.translate(0, -step, 0)
             elsif ((key == KC_UP and not y_axis) or key == KC_HOME)
-                puts '+z'
+                #puts '+z'
                 self.translate(0, 0, step)
             elsif ((key == KC_DOWN and not y_axis) or key == KC_END)
-                puts '-z'
+                #puts '-z'
                 self.translate(0, 0, -step)
             end
         else
@@ -87,22 +111,22 @@ class NudgeTool
 
             if false
             elsif key == KC_RIGHT
-                puts '+x'
+                #puts '+x'
                 self.rotate(step, 1, 0, 0)
             elsif key == KC_LEFT
-                puts '-x'
+                #puts '-x'
                 self.rotate(step, -1, 0, 0)
             elsif key == KC_UP and y_axis
-                puts '+y'
+                #puts '+y'
                 self.rotate(step, 0, 1, 0)
             elsif key == KC_DOWN and y_axis
-                puts '-y'
+                #puts '-y'
                 self.rotate(step, 0, -1, 0)
             elsif ((key == KC_UP and not y_axis) or key == KC_HOME)
-                puts '+z'
+                #puts '+z'
                 self.rotate(step, 0, 0, 1)
             elsif ((key == KC_DOWN and not y_axis) or key == KC_END)
-                puts '-z'
+                #puts '-z'
                 self.rotate(step, 0, 0, -1)
             end
         end
@@ -111,6 +135,8 @@ class NudgeTool
     end
 
     def onMouseMove(flags, x, y, view)
+        return if @component_instance
+
         if not @origin
             @originInput.pick view, x, y
             view.invalidate
@@ -118,28 +144,40 @@ class NudgeTool
     end
 
     def draw(view)
+        return if @component_instance
+
         @originInput.draw view
         view.draw_points([ @origin ], 10, 1, 'gold') if @origin
     end
 
     def translate(x, y, z)
-        return if not @origin
+        t = Geom::Transformation.translation(Geom::Vector3d.new(x, y, z))
 
-        t = Geom::Vector3d.new(x, y, z)
-
-        Sketchup.active_model.selection.each { |entity|
-            entity.transform!(Geom::Transformation.translation(t))
-        }
+        if @component_instance
+            @component_instance.transformation = @component_instance.transformation * t
+        else
+            return if not @origin
+            Sketchup.active_model.selection.each { |entity|
+                entity.transform!(t)
+            }
+        end
     end
 
     def rotate(angle, x, y, z)
-        return if not @origin
-        Sketchup.active_model.selection.each { |entity|
-            entity.transform!(Geom::Transformation.rotation(@origin, Geom::Vector3d.new(x, y, z), angle))
-        }
+        if @component_instance
+            t = Geom::Transformation.rotation(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(x, y, z), angle)
+            @component_instance.transformation = @component_instance.transformation * t
+        else
+            return if not @origin
+            Sketchup.active_model.selection.each { |entity|
+                entity.transform!(Geom::Transformation.rotation(@origin, Geom::Vector3d.new(x, y, z), angle))
+            }
+        end
     end
 
     def onLButtonDown(flags, x, y, view)
+        return if @component_instance
+
         if (Sketchup.active_model.selection.length == 0)
             #Clear selection
             Sketchup.active_model.selection.clear
@@ -165,9 +203,16 @@ class NudgeTool
     end
 
 menu = UI.menu("Tools").add_submenu("Nudge")
-menu.add_item("In model axes relative to point") {
+menu.add_item("Selection relative to point") {
     tool = NudgeTool.get_for_model Sketchup.active_model
+    tool.clear_component
     Sketchup.active_model.select_tool tool
+}
+menu.add_item("Component in local axes") {
+    tool = NudgeTool.get_for_model(Sketchup.active_model)
+    if tool.pick_component
+        Sketchup.active_model.select_tool tool
+    end
 }
 menu.add_item("Settings") {
     tool = NudgeTool.get_for_model Sketchup.active_model
