@@ -7,6 +7,7 @@ KC_ALT = 524288
 KC_GUI = 1048576
 KC_ENTER = 13
 KC_ESC = 27
+KC_SHIFT = 131072
 
 STATE_INIT = 0
 STATE_TAGGING = 1
@@ -74,6 +75,7 @@ class PlanerTool
     end
 
     def reset_plane
+        puts 'plane reset'
         @points = []
         @vertices = Set.new
         @centroid = nil
@@ -248,6 +250,8 @@ class PlanerTool
         elsif key == KC_ESC
             if @state != STATE_ORIENTING
                 puts 'discard plane'
+                result = UI.messagebox('Discard current vertices.  Are you sure?', MB_YESNO)
+                return unless result == IDYES
                 self.reset_plane
                 view.invalidate
             end
