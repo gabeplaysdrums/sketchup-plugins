@@ -18,11 +18,13 @@ class PlanerTool
     @@instances = Hash.new
 
     def self.get_for_model(model)
-        if not @@instances.include?(model.guid)
-            @@instances[model.guid] = self.new
+        #guid = model.guid
+        guid = ''
+        if not @@instances.include?(guid)
+            @@instances[guid] = self.new
         end
 
-        return @@instances[model.guid]
+        return @@instances[guid]
     end
 
     def self.plane_point(origin, x_axis, y_axis, x, y)
@@ -223,6 +225,18 @@ class PlanerTool
         @component_definition = nil
     end
 
+    def discard_plane
+        if @state != STATE_ORIENTING
+            puts 'discard plane'
+            result = UI.messagebox('Discard current vertices.  Are you sure?', MB_YESNO)
+            return unless result == IDYES
+            self.reset_plane
+            Sketchup.active_model.active_view.invalidate
+        end
+
+        self.set_state STATE_INIT
+    end
+
     def onKeyDown(key, repeat, flags, view)
         puts 'down: key=%d' % [key]
 
@@ -247,16 +261,8 @@ class PlanerTool
             elsif @plane
                 self.set_state STATE_ORIENTING
             end
-        elsif key == KC_ESC
-            if @state != STATE_ORIENTING
-                puts 'discard plane'
-                result = UI.messagebox('Discard current vertices.  Are you sure?', MB_YESNO)
-                return unless result == IDYES
-                self.reset_plane
-                view.invalidate
-            end
-
-            self.set_state STATE_INIT
+        # elsif key == KC_ESC
+        #     self.discard_plane
         end
     end
 
@@ -383,6 +389,10 @@ menu.add_item("Duplicate Component onto Plane") {
     if tool.pick_component
         Sketchup.active_model.select_tool(tool)
     end
+}
+menu.add_item("Discard plane") {
+    tool = PlanerTool.get_for_model(Sketchup.active_model)
+    tool.discard_plane
 }
 menu.add_item("Settings") { PlanerTool.get_for_model(Sketchup.active_model).show_settings }
 
